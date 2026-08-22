@@ -1,0 +1,85 @@
+# Publishes the repository root to GitHub Pages, unchanged.
+#
+# Deliberately does nothing interesting, and meant to be replaced. It exists so
+# that the Pages source can be moved from "deploy from a branch" to "GitHub
+# Actions" without the site going down in between.
+#
+# That move is the prerequisite for adding a build step of any kind. A branch
+# deploy can only serve files that are committed, so for as long as Pages is
+# wired to a branch, nothing generated -- by a bundler, a framework, or a
+# one-line script -- can reach the site. Making the move on its own, while
+# there is still nothing to build, is what keeps it checkable: the plumbing is
+# the only thing that changes.
+#
+# The problem it solves: flipping that setting makes Pages serve the most recent
+# Actions deployment, and until this file existed there had never been one --
+# 30 legacy builds and no `.github/workflows` at all. A pull request cannot
+# supply the first one either, because the `github-pages` environment deploys
+# from the default branch. So flipping the setting on its own would take the
+# site down until some workflow merged and its first run finished.
+#
+# The order this file is written for:
+#
+#   1. Merge this. It runs and produces a Pages artifact that nothing serves,
+#      because the source is still "deploy from a branch". The live site is
+#      untouched.
+#   2. Settings -> Pages -> Build and deployment -> Source -> GitHub Actions.
+#      Pages now serves the artifact from step 1, which is the same bytes the
+#      branch deploy was serving. Verify the live site is unchanged.
+#   3. Whenever a real build arrives, it replaces the "Assemble the site" step
+#      below with one that runs it. The deploy half is already here by then,
+#      and step 2 has already proven it works.
+#
+# There is no build step here because there is nothing to build: the site is
+# the HTML, CSS and JS files sitting in this repository, served as they are.
+name: Deploy Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let an in-progress deploy finish rather than cancelling it half-published.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Matches what the branch deploy serves: the repository root, as-is,
+      # including the parts that are not really the site (README.md, queries/).
+      # Not tidied up, on purpose -- the whole value of this step is that the
+      # bytes do not change when the source setting flips, so anything served
+      # before must still be served after.
+      - name: Assemble the site
+        run: |
+          mkdir -p _site
+          rsync -a --exclude='.git/' --exclude='.jj/' --exclude='_site/' ./ _site/
+          # Harmless today, since nothing here lives in an underscore-prefixed
+          # directory, but the branch deploy ran Jekyll and this artifact does
+          # not. Being explicit costs nothing and starts mattering as soon as a
+          # build step emits such paths, which bundlers tend to.
+          touch _site/.nojekyll
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
